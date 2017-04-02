@@ -116,6 +116,7 @@ class DeeFuzzer(Thread):
         self._info('Number of stations : ' + str(len(self.station_settings)))
 
     def _log(self, level, msg):
+        print level, msg
         try:
             obj = {'msg': 'Core: ' + str(msg), 'level': level}
             self.log_queue.put(obj)
@@ -313,7 +314,7 @@ class DeeFuzzer(Thread):
 
                     if name == '':
                         name = 'Station ' + str(i)
-                        if 'info' in self.station_settings[i]:
+                        if 'infos' in self.station_settings[i]:
                             if 'short_name' in self.station_settings[i]['infos']:
                                 name = self.station_settings[i]['infos']['short_name']
                                 y = 1
@@ -329,10 +330,13 @@ class DeeFuzzer(Thread):
                     if new_station.valid:
                         self.station_settings[i]['station_instance'] = new_station
                         self.station_settings[i]['station_instance'].start()
+                        self.station_instances[i] = new_station
                         self._info('Started station ' + name)
                     else:
                         self._err('Error validating station ' + name)
-                except Exception:
+                except Exception as err:
+                    print 'ERR', err
+                    raise
                     self._err('Error initializing station ' + name)
                     if not self.ignore_errors:
                         raise

@@ -92,6 +92,16 @@ class Station(Thread):
     def __init__(self, station, q, logqueue, m3u):
         Thread.__init__(self)
         self.station = station
+
+        def to_utf8(adict):
+            for k, v in adict.iteritems():
+                if isinstance(v, unicode):
+                    adict[k] = v.encode('utf-8')
+                elif isinstance(v, dict):
+                    to_utf8(v)
+
+        to_utf8(self.station)
+
         self.q = q
         self.logqueue = logqueue
         self.m3u = m3u
@@ -295,6 +305,7 @@ class Station(Thread):
         return os.path.join(os.path.dirname(self.media_source), a)
 
     def _log(self, level, msg):
+        print level, msg
         try:
             obj = {'msg': 'Station ' + str(self.channel_url) + ': ' + str(msg), 'level': str(level)}
             self.logqueue.put(obj)
@@ -903,4 +914,3 @@ class Station(Thread):
 
                 self.channel_close()
                 time.sleep(1)
-

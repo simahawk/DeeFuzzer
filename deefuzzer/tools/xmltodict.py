@@ -16,7 +16,7 @@ def indexchilds(dom, enc):
     childsdict = dict()
     for childnode in dom.childNodes:
         name = childnode.nodeName.encode(enc)
-        if name == "#text" or name == "#cdata-section":
+        if name in ("#text", "#cdata-section", "#comment"):
             # ignore whitespaces
             continue
         if haschilds(childnode):
@@ -36,5 +36,3 @@ def indexchilds(dom, enc):
 def xmltodict(data, enc=None):
     dom = xml.dom.minidom.parseString(data.strip())
     return indexchilds(dom, enc)
-
-
