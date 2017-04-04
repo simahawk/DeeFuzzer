@@ -37,10 +37,10 @@
 # Author: Guillaume Pellerin <yomguy@parisson.com>
 
 import os
-import string
 import datetime
 from mutagen.oggvorbis import OggVorbis
-from utils import *
+from mediabase import MediaBase
+from utils import get_file_info, clean_word
 
 
 class Ogg(MediaBase):
@@ -111,7 +111,9 @@ class Ogg(MediaBase):
         args = []
         if options is not None:
             self.options = options
-            if not ('verbose' in self.options and self.options['verbose'] != '0'):
+            if not (
+                'verbose' in self.options and self.options['verbose'] != '0'
+            ):
                 args.append('-Q ')
             if 'ogg_bitrate' in self.options:
                 args.append('-b ' + self.options['ogg_bitrate'])

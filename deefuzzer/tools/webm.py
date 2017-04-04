@@ -36,10 +36,8 @@
 
 # Author: Guillaume Pellerin <yomguy@parisson.com>
 
-import os
-import string
-import datetime
-from utils import *
+from mediabase import MediaBase
+from utils import get_file_info
 
 
 class WebM(MediaBase):

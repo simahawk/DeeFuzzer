@@ -1,6 +1,8 @@
 __author__ = 'Dennis Wallace'
 
+
 import tempfile
+
 
 class MediaBase(object):
     """Base Media class.  All media objects should inherit from this class
@@ -86,7 +88,7 @@ class MediaBase(object):
                 self.metadata[key] = self.sourceobj[key][0]
             except:
                 pass
-                
+
             try:
                 if self.tagdata[key] != '' and self.metadata[key] == "":
                     self.metadata[key] = self.sourceobj[self.tagdata[key]][0]
@@ -95,11 +97,11 @@ class MediaBase(object):
 
     def get_metadata_value(self, key, clean=False, clear_cache=False):
         """Returns a metadata value for a give key.  If clean is True, then the resulting string will
-        be cleaned before it is returned.  If the key does not exist, an empty string is returned.  Return 
+        be cleaned before it is returned.  If the key does not exist, an empty string is returned.  Return
         value is read from cache if possible (or unless clear_cache is set to True)"""
         if not self.metadata or clear_cache:
             self.read_file_metadata()
-            
+
         if key not in self.metadata:
             return ''
         r = self.metadata[key]

@@ -13,9 +13,11 @@
 import os
 import re
 import string
+import json
+import yaml
 import mimetypes
 from itertools import chain
-from deefuzzer.tools import *
+from deefuzzer.tools.xmltodict import xmltodict
 
 mimetypes.add_type('application/x-yaml', '.yaml')
 
@@ -52,7 +54,8 @@ def merge_defaults(setting, default):
     for key in set(chain(setting, default)):
         if key in setting:
             if key in default:
-                if isinstance(setting[key], dict) and isinstance(default[key], dict):
+                if isinstance(setting[key], dict) \
+                        and isinstance(default[key], dict):
                     combined[key] = merge_defaults(setting[key], default[key])
                 else:
                     combined[key] = setting[key]
@@ -71,54 +74,63 @@ def replace_all(option, repl):
         return r
     elif isinstance(option, dict):
         r = {}
-        for key in option.keys():
+        for key in option.iterkeys():
             r[key] = replace_all(option[key], repl)
         return r
     elif isinstance(option, str):
-        r = option
-        for key in repl.keys():
-            r = r.replace('[' + key + ']', repl[key])
-        return r
+        return option.format(**repl)
     return option
 
 
-def get_conf_dict(file):
-    mime_type = mimetypes.guess_type(file)[0]
+def read_yaml(data):
 
-    # Do the type check first, so we don't load huge files that won't be used
-    if 'xml' in mime_type:
-        confile = open(file, 'r')
-        data = confile.read()
-        confile.close()
-        return xmltodict(data, 'utf-8')
+    def custom_str_constructor(loader, node):
+        return loader.construct_scalar(node).encode('utf-8')
 
-    elif 'yaml' in mime_type or 'yml' in mime_type:
-        import yaml
+    yaml.add_constructor(u'tag:yaml.org,2002:str', custom_str_constructor)
+    return yaml.load(data)
 
-        def custom_str_constructor(loader, node):
-            return loader.construct_scalar(node).encode('utf-8')
 
-        yaml.add_constructor(u'tag:yaml.org,2002:str', custom_str_constructor)
-        confile = open(file, 'r')
-        data = confile.read()
-        confile.close()
-        return yaml.load(data)
+def read_xml(data):
+    return xmltodict(data, 'utf-8')
 
-    elif 'json' in mime_type:
-        import json
 
-        confile = open(file, 'r')
-        data = confile.read()
-        confile.close()
-        return json.loads(data)
+def deunicodify_hook(pairs):
+    new_pairs = []
+    for key, value in pairs:
+        if isinstance(value, unicode):
+            value = value.encode('utf-8')
+        if isinstance(key, unicode):
+            key = key.encode('utf-8')
+        new_pairs.append((key, value))
+    return dict(new_pairs)
 
+
+def read_json(data):
+    return json.loads(data, object_pairs_hook=deunicodify_hook)
+
+EXT_READERS = (
+    ('xml', read_xml),
+    ('json', read_json),
+    ('yaml', read_yaml),
+    ('yml', read_yaml),
+)
+
+
+def get_conf_dict(afile):
+    mime_type = mimetypes.guess_type(afile)[0]
+
+    for ext, reader in EXT_READERS:
+        if ext in mime_type:
+            with open(afile, 'r') as confile:
+                return reader(confile.read())
     return False
 
 
 def folder_contains_music(folder):
     files = os.listdir(folder)
-    for file in files:
-        filepath = os.path.join(folder, file)
+    for filename in files:
+        filepath = os.path.join(folder, filename)
         if os.path.isfile(filepath):
             mime_type = mimetypes.guess_type(filepath)[0]
             if 'audio/mpeg' in mime_type or 'audio/ogg' in mime_type:
