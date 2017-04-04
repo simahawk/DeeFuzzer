@@ -39,12 +39,20 @@
 import os
 import shout
 import Queue
-import datetime
+import time
 import mimetypes
 import hashlib
 from threading import Thread
-from deefuzzer.station import *
-from deefuzzer.tools import *
+from deefuzzer.station import (
+    Station,
+)
+from deefuzzer.tools.utils import (
+    get_conf_dict,
+    folder_contains_music,
+    replace_all,
+    merge_defaults,
+)
+from deefuzzer.tools.logger import QueueLogger
 
 mimetypes.add_type('application/x-yaml', '.yaml')
 
@@ -71,49 +79,51 @@ class DeeFuzzer(Thread):
         if 'deefuzzer' not in self.conf:
             return
 
+        self.conf = self.conf['deefuzzer']
+
         # Get the log setting first (if possible)
-        log_file = str(self.conf['deefuzzer'].pop('log', ''))
+        log_file = str(self.conf.pop('log', ''))
         self.log_dir = os.sep.join(log_file.split(os.sep)[:-1])
         if not os.path.exists(self.log_dir) and self.log_dir:
             os.makedirs(self.log_dir)
         self.logger = QueueLogger(log_file, self.log_queue)
         self.logger.start()
-        print self.conf['deefuzzer']
-        for key in self.conf['deefuzzer'].keys():
-            if key == 'm3u':
-                self.m3u = str(self.conf['deefuzzer'][key])
-
-            elif key == 'ignoreerrors':
-                # Ignore errors and continue as long as possible
-                self.ignore_errors = bool(self.conf['deefuzzer'][key])
-
-            elif key == 'max_retry':
-                # Maximum number of attempts to restart the stations on crash.
-                self.max_retry = int(self.conf['deefuzzer'][key])
-
-            elif key == 'station':
-                # Load station definitions from the main config file
-                if not isinstance(self.conf['deefuzzer'][key], list):
-                    self.add_station(self.conf['deefuzzer'][key])
-                else:
-                    for s in self.conf['deefuzzer'][key]:
-                        self.add_station(s)
-
-            elif key == 'stationconfig':
-                # Load additional station definitions from the requested folder
-                self.load_stations_fromconfig(self.conf['deefuzzer'][key])
-
-            elif key == 'stationfolder':
-                # Create stations automagically from a folder structure
-                if isinstance(self.conf['deefuzzer'][key], dict):
-                    self.watch_folder = self.conf['deefuzzer'][key]
-            else:
-                setattr(self, key, self.conf['deefuzzer'][key])
-
+        self._load_settings()
         # Set the deefuzzer logger
         self._info('Starting DeeFuzzer')
         self._info('Using libshout version %s' % shout.version())
         self._info('Number of stations : ' + str(len(self.station_settings)))
+
+    def _load_settings(self):
+        self.m3u = str(self.conf['m3u'])
+        self.ignore_errors = bool(self.conf['ignoreerrors'])
+        self.max_retry = int(self.conf['max_retry'])
+
+        # get stations
+        stations = self.conf.get('station', [])
+        # Load station definitions from the main config file
+        if not isinstance(stations, list):
+            stations = [stations, ]
+        for item in stations:
+            self.add_station(item)
+
+        if 'stationconfig' in self.conf:
+            # Load additional station definitions from the requested folder
+            self.load_stations_fromconfig(self.conf['stationconfig'])
+
+        if 'stationfolder' in self.conf:
+            # Create stations automagically from a folder structure
+            if isinstance(self.conf['stationfolder'], dict):
+                self.watch_folder = self.conf['stationfolder']
+
+        skip_keys = (
+            # TODO: would be better to have explicit remaining keys
+            'm3u', 'ignoreerrors', 'max_retry',
+            'stationconfig', 'stationfolder'
+        )
+        for k, v in self.conf.iteritems():
+            if k not in skip_keys:
+                setattr(self, k, v)
 
     def _log(self, level, msg):
         print level, msg
@@ -129,21 +139,27 @@ class DeeFuzzer(Thread):
     def _err(self, msg):
         self._log('err', msg)
 
+    def _write_m3u(self, m3u):
+        m3u.write('#EXTM3U\n')
+        for station in self.station_settings:
+            m3u.write('#EXTINF:{},{}\n'.format('-1', station['infos']['name']))
+            channel_url = u'http://{}:{}{}\n'.format(
+                station['server']['host'],
+                station['server']['port'],
+                station['server']['mountpoint'])
+            m3u.write(channel_url)
+
     def set_m3u_playlist(self):
         m3u_dir = os.sep.join(self.m3u.split(os.sep)[:-1])
         if not os.path.exists(m3u_dir) and m3u_dir:
             os.makedirs(m3u_dir)
-        m3u = open(self.m3u, 'w')
-        m3u.write('#EXTM3U\n')
-        for station in self.station_settings:
-            m3u.write('#EXTINF:%s,%s\n' % ('-1', station['infos']['name']))
-            m3u.write('http://' + station['server']['host'] + ':' + \
-                str(station['server']['port']) + '/' + station['server']['mountpoint'] + '\n')
-        m3u.close()
+        with open(self.m3u, 'w') as m3u:
+            self._write_m3u(m3u)
         self._info('Writing M3U file to : ' + self.m3u)
 
     def create_stations_fromfolder(self):
-        """Scan a folder for subfolders containing media, and make stations from them all."""
+        """Scan a folder for subfolders containing media
+        and make stations from them all."""
 
         options = self.watch_folder
         if 'folder' not in options:
@@ -164,7 +180,8 @@ class DeeFuzzer(Thread):
             # The specified path is not a folder.  Bail.
             return
 
-        # This makes the log file a lot more verbose.  Commented out since we report on new stations anyway.
+        # This makes the log file a lot more verbose.
+        # Commented out since we report on new stations anyway.
         # self._info('Scanning folder ' + folder + ' for stations')
 
         if 'infos' not in options:
@@ -194,7 +211,7 @@ class DeeFuzzer(Thread):
         return True
 
     def create_station(self, folder, options):
-        """Create a station definition for a folder given the specified options."""
+        """Create a station definition for a folder given the options."""
 
         s = {}
         path, name = os.path.split(folder)
@@ -215,7 +232,8 @@ class DeeFuzzer(Thread):
         """Load one or more configuration files looking for stations."""
 
         if isinstance(folder, dict) or isinstance(folder, list):
-            # We were given a list or dictionary.  Loop though it and load em all
+            # We were given a list or dictionary.
+            # Loop though it and load em all
             for f in folder:
                 self.load_station_configs(f)
             return
@@ -252,8 +270,10 @@ class DeeFuzzer(Thread):
     def add_station(self, this_station):
         """Adds a station configuration to the list of stations."""
         try:
-            # We should probably test to see if we're putting the same station in multiple times
-            # Same in this case probably means the same media folder, server, and mountpoint
+            # We should probably test to see
+            # if we're putting the same station in multiple times.
+            # Same in this case probably means
+            # the same media folder, server and mountpoint
             self.station_settings.append(this_station)
         except Exception:
             return
@@ -271,65 +291,26 @@ class DeeFuzzer(Thread):
             if ns_new > ns:
                 self._info('Loading new stations')
 
-            for i in range(0, ns_new):
-                name = ''
+            for i in xrange(0, ns_new):
+                station = self.station_settings[i]
+                name = station.get('station_name', '')
+                station.setdefault('retries', 0)
                 try:
-                    if 'station_name' in self.station_settings[i]:
-                        name = self.station_settings[i]['station_name']
+                    status = self._station_check_status(station, name)
+                    if status is True:
+                        # already existing
+                        continue
 
-                    if 'retries' not in self.station_settings[i]:
-                        self.station_settings[i]['retries'] = 0
-
-                    try:
-                        if 'station_instance' in self.station_settings[i]:
-                            # Check for station running here
-                            if self.station_settings[i]['station_instance'].isAlive():
-                                # Station exists and is alive.  Don't recreate.
-                                self.station_settings[i]['retries'] = 0
-                                continue
-
-                            if self.max_retry >= 0 and self.station_settings[i]['retries'] <= self.max_retry:
-                                # Station passed the max retries count is will not be reloaded
-                                if 'station_stop_logged' not in self.station_settings[i]:
-                                    self._err('Station ' + name + ' is stopped and will not be restarted.')
-                                    self.station_settings[i]['station_stop_logged'] = True
-                                continue
-
-                            self.station_settings[i]['retries'] += 1
-                            trynum = str(self.station_settings[i]['retries'])
-                            self._info('Restarting station ' + name + ' (try ' + trynum + ')')
-                    except Exception as e:
-                        self._err('Error checking status for ' + name)
-                        self._err(str(e))
-                        if not self.ignore_errors:
-                            raise
-
-                    # Apply station defaults if they exist
-                    if 'stationdefaults' in self.conf['deefuzzer']:
-                        if isinstance(self.conf['deefuzzer']['stationdefaults'], dict):
-                            self.station_settings[i] = merge_defaults(
-                                self.station_settings[i],
-                                self.conf['deefuzzer']['stationdefaults']
-                            )
+                    self._station_apply_defaults(station)
 
                     if name == '':
                         name = 'Station ' + str(i)
-                        if 'infos' in self.station_settings[i]:
-                            if 'short_name' in self.station_settings[i]['infos']:
-                                name = self.station_settings[i]['infos']['short_name']
-                                y = 1
-                                while name in self.station_instances.keys():
-                                    y += 1
-                                    name = self.station_settings[i]['infos']['short_name'] + " " + str(y)
+                        self._station_prepare(station, name)
 
-                        self.station_settings[i]['station_name'] = name
-                        namehash = hashlib.md5(name).hexdigest()
-                        self.station_settings[i]['station_statusfile'] = os.sep.join([self.log_dir, namehash])
-
-                    new_station = Station(self.station_settings[i], q, self.log_queue, self.m3u)
+                    new_station = Station(station, q, self.log_queue, self.m3u)
                     if new_station.valid:
-                        self.station_settings[i]['station_instance'] = new_station
-                        self.station_settings[i]['station_instance'].start()
+                        station['station_instance'] = new_station
+                        station['station_instance'].start()
                         self.station_instances[i] = new_station
                         self._info('Started station ' + name)
                     else:
@@ -350,6 +331,59 @@ class DeeFuzzer(Thread):
 
             time.sleep(5)
             # end main loop
+
+    def _station_maxretry_over(self, station):
+        return self.max_retry >= 0 and station['retries'] <= self.max_retry
+
+    def _station_check_status(self, station, name):
+        try:
+            if 'station_instance' in station:
+                # Check for station running here
+                if station['station_instance'].isAlive():
+                    # Station exists and is alive.  Don't recreate.
+                    station['retries'] = 0
+                    return True
+
+                if self._station_maxretry_over(station):
+                    # Station passed max retries count: will not be reloaded
+                    if 'station_stop_logged' not in station:
+                        msg = (
+                            'Station {} is stopped and will not be restarted.'
+                        ).format(name)
+                        self._err(msg)
+                        station['station_stop_logged'] = True
+                    return True
+
+                station['retries'] += 1
+                trynum = str(station['retries'])
+                msg = 'Restarting station {} (try {})'.format(name, trynum)
+                self._info(msg)
+        except Exception as e:
+            self._err('Error checking status for ' + name)
+            self._err(str(e))
+            if not self.ignoreErrors:
+                raise
+
+    def _station_apply_defaults(self, station):
+        # Apply station defaults if they exist
+        if 'stationdefaults' in self.conf:
+            if isinstance(self.conf['stationdefaults'], dict):
+                station = merge_defaults(
+                    station,
+                    self.conf['stationdefaults']
+                )
+
+    def _station_prepare(self, station, name):
+        if 'infos' in station and 'short_name' in station['infos']:
+            prefix = name = station['infos']['short_name']
+            y = 1
+            while name in self.station_instances.iterkeys():
+                y += 1
+                name = prefix + " " + str(y)
+
+        station['station_name'] = name
+        namehash = hashlib.md5(name).hexdigest()
+        station['station_statusfile'] = os.sep.join([self.log_dir, namehash])
 
 
 class Producer(Thread):
