@@ -37,23 +37,27 @@
 # Author: Guillaume Pellerin <yomguy@parisson.com>
 
 import os
-import sys
 import time
 import datetime
-import string
 import random
 import shout
 import urllib
 import mimetypes
 import json
 import hashlib
-
 from threading import Thread
-from player import *
-from recorder import *
-from relay import *
-from streamer import *
-from tools import *
+
+from .player import URLReader, Player, FileReader
+from .recorder import Recorder
+from .streamer import HTTPStreamer
+from .tools.mediabase import MediaBase
+from .tools.osc import OSCController
+from .tools.twitt import Twitter
+from .tools.ogg import Ogg
+from .tools.mp3 import Mp3
+from .tools.webm import WebM
+from .tools.utils import get_file_info
+from .tools.PyRSS2Gen import RSS2, RSSItem, Enclosure, Guid
 
 
 class Station(Thread):
@@ -124,15 +128,18 @@ class Station(Thread):
         # Media
         if 'm3u' in self.station['media']:
             if not self.station['media']['m3u'].strip() == '':
-                self.media_source = self._path_add_base(self.station['media']['m3u'])
+                self.media_source = self._path_add_base(
+                    self.station['media']['m3u'])
 
         if 'dir' in self.station['media']:
             if not self.station['media']['dir'].strip() == '':
-                self.media_source = self._path_add_base(self.station['media']['dir'])
+                self.media_source = self._path_add_base(
+                    self.station['media']['dir'])
 
         if 'source' in self.station['media']:
             if not self.station['media']['source'].strip() == '':
-                self.media_source = self._path_add_base(self.station['media']['source'])
+                self.media_source = self._path_add_base(
+                    self.station['media']['source'])
 
         self.media_format = self.station['media']['format']
         self.shuffle_mode = int(self.station['media']['shuffle'])
@@ -155,7 +162,8 @@ class Station(Thread):
             self.appendtype = int(self.station['server']['appendtype'])
 
         if 'type' in self.station['server']:
-            self.type = self.station['server']['type']  # 'icecast' | 'stream-m'
+            # 'icecast' | 'stream-m'
+            self.type = self.station['server']['type']
         else:
             self.type = 'icecast'
 
@@ -166,9 +174,12 @@ class Station(Thread):
             self.channel = shout.Shout()
             self.channel.mount = '/' + self.mountpoint
             if self.appendtype:
-                self.channel.mount = self.channel.mount + '.' + self.media_format
+                self.channel.mount = \
+                    self.channel.mount + '.' + self.media_format
         else:
-            self._err('Not a compatible server type. Choose "stream-m" or "icecast".')
+            self._err(
+                'Not a compatible server type. Choose "stream-m" or "icecast".'
+            )
             return
 
         self.channel.url = self.station['info']['url']
@@ -191,7 +202,8 @@ class Station(Thread):
                                        'quality': str(self.ogg_quality),
                                        'channels': str(self.voices), }
 
-        self.server_url = 'http://' + self.channel.host + ':' + str(self.channel.port)
+        self.server_url = 'http://{}:{}'.format(
+            self.channel.host, self.channel.port)
         self.channel_url = self.server_url + self.channel.mount
 
         # RSS
@@ -210,16 +222,19 @@ class Station(Thread):
             if 'playlist' in self.station['rss']:
                 self.feeds_playlist = int(self.station['rss']['playlist'])
             if 'showfilename' in self.station['rss']:
-                self.feeds_showfilename = int(self.station['rss']['showfilename'])
+                self.feeds_showfilename = int(
+                    self.station['rss']['showfilename'])
             if 'showfilepath' in self.station['rss']:
-                self.feeds_showfilepath = int(self.station['rss']['showfilepath'])
+                self.feeds_showfilepath = int(
+                    self.station['rss']['showfilepath'])
 
             self.feeds_media_url = self.channel.url + '/media/'
             if 'media_url' in self.station['rss']:
                 if not self.station['rss']['media_url'] == '':
                     self.feeds_media_url = self.station['rss']['media_url']
-
-        self.base_name = self.feeds_dir + os.sep + self.short_name + '_' + self.channel.format
+        # TODO: use path.join
+        self.base_name = self.feeds_dir + os.sep + \
+            self.short_name + '_' + self.channel.format
         self.feeds_current_file = self.base_name + '_current'
         self.feeds_playlist_file = self.base_name + '_playlist'
 
@@ -227,8 +242,10 @@ class Station(Thread):
         self._info('Opening ' + self.short_name + ' - ' + self.channel.name)
 
         self.metadata_relative_dir = 'metadata'
-        self.metadata_url = self.channel.url + '/rss/' + self.metadata_relative_dir
-        self.metadata_dir = self.feeds_dir + os.sep + self.metadata_relative_dir
+        self.metadata_url = \
+            self.channel.url + '/rss/' + self.metadata_relative_dir
+        self.metadata_dir = \
+            self.feeds_dir + os.sep + self.metadata_relative_dir
         if not os.path.exists(self.metadata_dir):
             os.makedirs(self.metadata_dir)
 
@@ -243,13 +260,20 @@ class Station(Thread):
                 self.osc_port = int(self.station['control']['port'])
                 self.osc_controller = OSCController(self.osc_port)
                 # OSC paths and callbacks
-                self.osc_controller.add_method('/media/next', 'i', self.media_next_callback)
-                self.osc_controller.add_method('/media/relay', 'i', self.relay_callback)
-                self.osc_controller.add_method('/twitter', 'i', self.twitter_callback)
-                self.osc_controller.add_method('/jingles', 'i', self.jingles_callback)
-                self.osc_controller.add_method('/record', 'i', self.record_callback)
-                self.osc_controller.add_method('/player', 'i', self.player_callback)
-                self.osc_controller.add_method('/run', 'i', self.run_callback)
+                self.osc_controller.add_method(
+                    '/media/next', 'i', self.media_next_callback)
+                self.osc_controller.add_method(
+                    '/media/relay', 'i', self.relay_callback)
+                self.osc_controller.add_method(
+                    '/twitter', 'i', self.twitter_callback)
+                self.osc_controller.add_method(
+                    '/jingles', 'i', self.jingles_callback)
+                self.osc_controller.add_method(
+                    '/record', 'i', self.record_callback)
+                self.osc_controller.add_method(
+                    '/player', 'i', self.player_callback)
+                self.osc_controller.add_method(
+                    '/run', 'i', self.run_callback)
                 self.osc_controller.start()
 
         # Jingling between each media.
@@ -259,9 +283,11 @@ class Station(Thread):
             if 'shuffle' in self.station['jingles']:
                 self.jingles_shuffle = int(self.station['jingles']['shuffle'])
             if 'frequency' in self.station['jingles']:
-                self.jingles_frequency = int(self.station['jingles']['frequency'])
+                self.jingles_frequency = int(
+                    self.station['jingles']['frequency'])
             if 'dir' in self.station['jingles']:
-                self.jingles_dir = self._path_add_base(self.station['jingles']['dir'])
+                self.jingles_dir = self._path_add_base(
+                    self.station['jingles']['dir'])
             if self.jingles_mode == 1:
                 self.jingles_callback('/jingles', [1])
 
@@ -292,7 +318,8 @@ class Station(Thread):
         # Recording
         if 'record' in self.station:
             self.record_mode = int(self.station['record']['mode'])
-            self.record_dir = self._path_add_base(self.station['record']['dir'])
+            self.record_dir = self._path_add_base(
+                self.station['record']['dir'])
             if self.record_mode:
                 self.record_callback('/record', [1])
 
@@ -307,8 +334,9 @@ class Station(Thread):
     def _log(self, level, msg):
         print level, msg
         try:
-            obj = {'msg': 'Station ' + str(self.channel_url) + ': ' + str(msg), 'level': str(level)}
-            self.logqueue.put(obj)
+            msg = u'Station {}: {} level: {}'.format(
+                self.channel_url, msg, level)
+            self.logqueue.put({'msg': msg})
         except:
             pass
 
@@ -321,14 +349,14 @@ class Station(Thread):
     def run_callback(self, path, value):
         value = value[0]
         self.run_mode = value
-        message = "received OSC message '%s' with arguments '%d'" % (path, value)
-        self._info(message)
+        msg = "received OSC message '%s' with arguments '%d'" % (path, value)
+        self._info(msg)
 
     def media_next_callback(self, path, value):
         value = value[0]
         self.next_media = value
-        message = "received OSC message '%s' with arguments '%d'" % (path, value)
-        self._info(message)
+        msg = "received OSC message '%s' with arguments '%d'" % (path, value)
+        self._info(msg)
 
     def relay_callback(self, path, value):
         value = value[0]
@@ -343,22 +371,24 @@ class Station(Thread):
 
         self.id = 0
         self.next_media = 1
-        message = "received OSC message '%s' with arguments '%d'" % (path, value)
-        self._info(message)
-        message = "relaying : %s" % self.relay_url
-        self._info(message)
+        msg = "received OSC message '%s' with arguments '%d'" % (path, value)
+        self._info(msg)
+        msg = "relaying : %s" % self.relay_url
+        self._info(msg)
 
     def twitter_callback(self, path, value):
         value = value[0]
         self.twitter = Twitter(self.twitter_key, self.twitter_secret)
         self.twitter_mode = value
-        message = "received OSC message '%s' with arguments '%d'" % (path, value)
+        msg = "received OSC message '%s' with arguments '%d'" % (path, value)
 
         # IMPROVEMENT: The URL paths should be configurable because they're
         # server-implementation specific
-        self.m3u_url = self.channel.url + '/m3u/' + self.m3u.split(os.sep)[-1]
-        self.feeds_url = self.channel.url + '/rss/' + self.feeds_playlist_file.split(os.sep)[-1]
-        self._info(message)
+        self.m3u_url = \
+            self.channel.url + '/m3u/' + self.m3u.split(os.sep)[-1]
+        self.feeds_url = self.channel.url + '/rss/' + \
+            self.feeds_playlist_file.split(os.sep)[-1]
+        self._info(msg)
 
     def jingles_callback(self, path, value):
         value = value[0]
@@ -367,8 +397,8 @@ class Station(Thread):
             self.jingles_length = len(self.jingles_list)
             self.jingle_id = 0
         self.jingles_mode = value
-        message = "received OSC message '%s' with arguments '%d'" % (path, value)
-        self._info(message)
+        msg = "received OSC message '%s' with arguments '%d'" % (path, value)
+        self._info(msg)
 
     def record_callback(self, path, value):
         value = value[0]
@@ -376,7 +406,8 @@ class Station(Thread):
             if not os.path.exists(self.record_dir):
                 os.makedirs(self.record_dir)
             self.rec_file = self.short_name.replace('/', '_') + '-'
-            self.rec_file += datetime.datetime.now().strftime("%x-%X").replace('/', '_')
+            self.rec_file += \
+                datetime.datetime.now().strftime("%x-%X").replace('/', '_')
             self.rec_file += '.' + self.channel.format
             self.recorder = Recorder(self.record_dir)
             self.recorder.open(self.rec_file)
@@ -395,22 +426,23 @@ class Station(Thread):
                 if self.channel.format == 'ogg':
                     media = Ogg(self.record_dir + os.sep + self.rec_file)
                 if media:
-                    media.metadata = {'artist': self.artist.encode('utf-8'),
-                                      'title': self.title.encode('utf-8'),
-                                      'album': self.short_name.encode('utf-8'),
-                                      'genre': self.channel.genre.encode('utf-8'),
-                                      'date': date.encode('utf-8'), }
+                    media.metadata = {
+                        'artist': self.artist.encode('utf-8'),
+                        'title': self.title.encode('utf-8'),
+                        'album': self.short_name.encode('utf-8'),
+                        'genre': self.channel.genre.encode('utf-8'),
+                        'date': date.encode('utf-8'), }
                     media.write_tags()
 
         self.record_mode = value
-        message = "received OSC message '%s' with arguments '%d'" % (path, value)
-        self._info(message)
+        msg = "received OSC message '%s' with arguments '%d'" % (path, value)
+        self._info(msg)
 
     def player_callback(self, path, value):
         value = value[0]
         self.player_mode = value
-        message = "received OSC message '%s' with arguments '%d'" % (path, value)
-        self._info(message)
+        msg = "received OSC message '%s' with arguments '%d'" % (path, value)
+        self._info(msg)
 
     def get_playlist(self):
         file_list = []
@@ -419,13 +451,7 @@ class Station(Thread):
             if os.path.isdir(self.media_source):
                 self.q.get(1)
                 try:
-                    for root, dirs, files in os.walk(self.media_source):
-                        for file in files:
-                            s = file.split('.')
-                            ext = s[len(s) - 1]
-                            if ext.lower() == self.channel.format and not os.sep + '.' in file:
-                                file_list.append(root + os.sep + file)
-                    file_list.sort()
+                    file_list = self._get_filelist(self.media_source)
                 except:
                     pass
                 self.q.task_done()
@@ -454,16 +480,20 @@ class Station(Thread):
     def get_array_hash(self, s):
         return hashlib.md5(str(s)).hexdigest()
 
-    def get_jingles(self):
-        file_list = []
-        for root, dirs, files in os.walk(self.jingles_dir):
-            for file in files:
-                s = file.split('.')
+    def _get_filelist(self, path):
+        filelist = []
+        for root, dirs, files in os.walk(path):
+            for filename in files:
+                # TODO use path splitext
+                s = filename.split('.')
                 ext = s[len(s) - 1]
-                if ext.lower() == self.channel.format and not os.sep + '.' in file:
-                    file_list.append(root + os.sep + file)
-        file_list.sort()
-        return file_list
+                if ext.lower() == self.channel.format \
+                        and not os.sep + '.' in filename:
+                    filelist.append(root + os.sep + filename)
+        return sorted(filelist)
+
+    def get_jingles(self):
+        return self._get_filelist(self.jingles_dir)
 
     def tweet(self):
         if len(self.new_tracks):
@@ -473,10 +503,10 @@ class Station(Thread):
 
                 artist_names = artist.split(' ')
                 artist_tags = ' #'.join(list(set(artist_names) - {'&', '-'}))
-                message = '#NEWTRACK ! %s %s on #%s' % \
-                          (song, artist_tags.strip(), self.short_name)
-                message = message[:113] + self.feeds_url
-                self.update_twitter(message)
+                msg = '#NEWTRACK ! %s %s on #%s' % (
+                    song, artist_tags.strip(), self.short_name)
+                msg = msg[:113] + self.feeds_url
+                self.update_twitter(msg)
 
     def get_next_media(self):
         # Init playlist
@@ -484,6 +514,8 @@ class Station(Thread):
             playlist = self.playlist
             new_playlist = self.get_playlist()
             lp_new = len(new_playlist)
+            same_hash = self.get_array_hash(
+                new_playlist) == self.get_array_hash(self.playlist)
 
             if not self.counter:
                 self.id = 0
@@ -496,12 +528,15 @@ class Station(Thread):
                 if self.shuffle_mode:
                     random.shuffle(self.playlist)
 
-                self._info('Generating new playlist (' + str(self.lp) + ' tracks)')
+                self._info(
+                    'Generating new playlist ({} tracks)'.format(self.lp)
+                )
 
-            # use a hash check instead to detect when a filename changes as well as playlist length
-            # Also, recompute the hash every time for the built-in playlist so we can catch when that
-            # changes as well
-            elif self.get_array_hash(new_playlist) != self.get_array_hash(self.playlist):
+            # use a hash check instead to detect
+            # when a filename changes as well as playlist length
+            # Also, recompute the hash every time
+            # for the built-in playlist to catch when that changes as well
+            elif same_hash:
                 self.id += 1
                 if self.id >= lp_new:
                     self.id = 0
@@ -527,9 +562,10 @@ class Station(Thread):
 
                 self.playlist = playlist
 
-                self._info('Generating new playlist (' + str(self.lp) + ' tracks)')
-
-            if self.jingles_mode and not (self.counter % self.jingles_frequency) and self.jingles_length:
+                self._info(
+                    'Generating new playlist ({} tracks)'.format(self.lp)
+                )
+            if self.jingles_mode and not (self.counter % self.jingles_frequency) and self.jingles_length: # noqa
                 media = self.jingles_list[self.jingle_id]
                 self.jingle_id = (self.jingle_id + 1) % self.jingles_length
             else:
@@ -542,7 +578,9 @@ class Station(Thread):
                 f.write(str(self.id))
                 f.close()
                 if self.feeds_playlist:
-                    self.update_feeds(self.media_to_objs(self.playlist), self.feeds_playlist_file, '(playlist)')
+                    self.update_feeds(
+                        self.media_to_objs(self.playlist),
+                        self.feeds_playlist_file, '(playlist)')
             except:
                 pass
             self.q.task_done()
@@ -558,15 +596,20 @@ class Station(Thread):
             file_meta = MediaBase()
             file_name, file_title, file_ext = get_file_info(media)
             self.q.get(1)
+            mapping = (
+                ('mp3', 'audio/mpeg', Mp3),
+                ('ogg', 'audio/ogg', Ogg),
+                ('webm', 'video/webm', WebM),
+            )
             try:
-                if file_ext.lower() == 'mp3' or mimetypes.guess_type(media)[0] == 'audio/mpeg':
-                    file_meta = Mp3(media)
-                elif file_ext.lower() == 'ogg' or mimetypes.guess_type(media)[0] == 'audio/ogg':
-                    file_meta = Ogg(media)
-                elif file_ext.lower() == 'webm' or mimetypes.guess_type(media)[0] == 'video/webm':
-                    file_meta = WebM(media)
+                for ext, mime, Klass in mapping:
+                    if file_ext.lower() == ext or \
+                            mimetypes.guess_type(media)[0] == mime:
+                        file_meta = Klass(media)
             except Exception, e:
-                self._err('Could not get specific media type class for %s' % (media))
+                self._err(
+                    'Could not get specific media type class for %s' % (media)
+                )
                 self._err('Error: %s' % (str(e)))
                 pass
             self.q.task_done()
@@ -590,14 +633,18 @@ class Station(Thread):
             json_item = {}
             media_stats = os.stat(media.media)
             media_date = time.localtime(media_stats[8])
-            media_date = time.strftime("%a, %d %b %Y %H:%M:%S +0200", media_date)
+            media_date = time.strftime(
+                "%a, %d %b %Y %H:%M:%S +0200", media_date)
             media.metadata['Duration'] = str(media.length).split('.')[0]
             media.metadata['Bitrate'] = str(media.bitrate) + ' kbps'
-            media.metadata['StartTime'] = str(media_absolute_playtime).split('.')[0]
-            media.metadata['EndTime'] = str(media_absolute_playtime+media.length).split('.')[0]
+            media.metadata['StartTime'] = str(
+                media_absolute_playtime).split('.')[0]
+            media.metadata['EndTime'] = str(
+                media_absolute_playtime + media.length).split('.')[0]
 
             media_description = '<table>'
-            media_description_item = '<tr><td>%s:   </td><td><b>%s</b></td></tr>'
+            media_description_item = \
+                '<tr><td>%s:   </td><td><b>%s</b></td></tr>'
 
             for key in media.metadata.keys():
                 if media.metadata[key] != '':
@@ -605,14 +652,16 @@ class Station(Thread):
                         continue
                     if key == 'filename' and not self.feeds_showfilename:
                         continue
-                    media_description += media_description_item % (key.capitalize(),
-                                                                   media.metadata[key])
+                    media_description += media_description_item % (
+                        key.capitalize(), media.metadata[key])
                     json_item[key] = media.metadata[key]
             if self.feeds_showfilepath:
-                media_description += media_description_item % ('Filepath', media.media)
+                media_description += media_description_item % (
+                    'Filepath', media.media)
                 json_item['filepath'] = media.media
             if self.feeds_showfilename:
-                media_description += media_description_item % ('Filename', media.file_name)
+                media_description += media_description_item % (
+                    'Filename', media.file_name)
                 json_item['filename'] = media.file_name
             media_description += '</table>'
 
@@ -626,7 +675,8 @@ class Station(Thread):
                     title=song,
                     link=media_link,
                     description=media_description,
-                    enclosure=Enclosure(media_link, str(media.size), 'audio/mpeg'),
+                    enclosure=Enclosure(
+                        media_link, str(media.size), 'audio/mpeg'),
                     guid=Guid(media_link),
                     pubDate=media_date, )
                 )
@@ -668,12 +718,12 @@ class Station(Thread):
             pass
         self.q.task_done()
 
-    def update_twitter(self, message):
+    def update_twitter(self, msg):
         try:
-            self.twitter.post(message.decode('utf8'))
-            self._info('Twitting : "' + message + '"')
+            self.twitter.post(msg.decode('utf8'))
+            self._info('Twitting : "' + msg + '"')
         except:
-            self._err('Twitting : "' + message + '"')
+            self._err('Twitting : "' + msg + '"')
 
     def set_relay_mode(self):
         self.prefix = '#nowplaying #LIVE'
@@ -716,7 +766,8 @@ class Station(Thread):
             self._info("Failed to get media object for %s" % (self.media))
             pass
 
-        self.title, self.artist, self.song = self.get_songmeta(self.current_media_obj)
+        self.title, self.artist, self.song = \
+            self.get_songmeta(self.current_media_obj)
 
     def set_read_mode(self):
         self.prefix = '#nowplaying'
@@ -726,7 +777,10 @@ class Station(Thread):
             fn = self.current_media_obj.file_name
             if fn:
                 self.metadata_file = self.metadata_dir + os.sep + fn + '.xml'
-            self.update_feeds([self.current_media_obj], self.feeds_current_file, '(currently playing)')
+            self.update_feeds(
+                [self.current_media_obj],
+                self.feeds_current_file,
+                '(currently playing)')
             if fn:
                 self._info('DeeFuzzing:  id = %s, name = %s' % (self.id, fn))
         except:
@@ -749,11 +803,11 @@ class Station(Thread):
     def update_twitter_current(self):
         if not self.__twitter_should_update():
             return
-        message = '%s %s on #%s' % (self.prefix, self.song, self.short_name)
+        msg = '%s %s on #%s' % (self.prefix, self.song, self.short_name)
         tags = '#' + ' #'.join(self.twitter_tags)
-        message = message + ' ' + tags
-        message = message[:108] + ' > ' + self.m3u_url
-        self.update_twitter(message)
+        msg = msg + ' ' + tags
+        msg = msg[:108] + ' > ' + self.m3u_url
+        self.update_twitter(msg)
 
     def channel_open(self):
         if self.channelIsOpen:
@@ -783,13 +837,15 @@ class Station(Thread):
 
         while not self.server_ping:
             try:
-                server = urllib.urlopen(self.server_url)
+                urllib.urlopen(self.server_url)
                 self.server_ping = True
                 self._info('Channel available.')
             except:
                 time.sleep(1)
                 if log:
-                    self._err('Could not connect the channel.  Waiting for channel to become available.')
+                    self._err(
+                        'Could not connect the channel. '
+                        'Waiting for channel to become available.')
                     log = False
 
     def icecastloop_nextmedia(self):
@@ -797,7 +853,9 @@ class Station(Thread):
             self.next_media = 0
             self.media = self.get_next_media()
             self.counter += 1
-            self.counter = (self.counter % self.jingles_frequency) + self.jingles_frequency
+            self.counter = (
+                self.counter % self.jingles_frequency
+            ) + self.jingles_frequency
             if self.relay_mode:
                 self.set_relay_mode()
             elif os.path.exists(self.media) and not os.sep + '.' in self.media:
@@ -822,7 +880,8 @@ class Station(Thread):
             return True
 
         if self.jingles_mode and (self.counter % self.jingles_frequency):
-            # We should be playing a jingle, and we don't send jingles to Twiitter.
+            # We should be playing a jingle
+            # and we don't send jingles to Twiitter.
             return False
         return True
 
@@ -830,7 +889,8 @@ class Station(Thread):
         try:
             self.update_twitter_current()
             if self.song:
-                self.channel.set_metadata({'song': self.song, 'charset': 'utf-8'})
+                self.channel.set_metadata(
+                    {'song': self.song, 'charset': 'utf-8'})
             return True
         except Exception, e:
             self._err('icecastloop_metadata: Error: ' + str(e))
@@ -850,13 +910,16 @@ class Station(Thread):
             self.channel.start()
 
         if self.type == 'icecast':
-            while True:  # Do this so that the handlers will still restart the stream
+            while True:
+                # Do this so that the handlers will still restart the stream
                 while self.run_mode:
                     if not self.channel_open():
                         return
 
                     if not self.icecastloop_nextmedia():
-                        self._info('Something wrong happened in icecastloop_nextmedia.  Ending.')
+                        self._info(
+                            'Something wrong happened '
+                            'in icecastloop_nextmedia. Ending.')
                         self.channel_close()
                         return
 
@@ -878,7 +941,8 @@ class Station(Thread):
                                 # Record the chunk
                                 self.recorder.write(self.chunk)
                             except:
-                                self._err('could not write the buffer to the file')
+                                self._err(
+                                    'could not write the buffer to the file')
 
                         try:
                             # Send the chunk to the stream
@@ -893,12 +957,15 @@ class Station(Thread):
                                     self.recorder.close()
                                 return
                             try:
-                                self.channel.set_metadata({'song': self.song, 'charset': 'utf8', })
+                                self.channel.set_metadata(
+                                    {'song': self.song, 'charset': 'utf8', })
                                 self._info('channel restarted')
                                 self.channel.send(self.chunk)
                                 self.channel.sync()
                             except:
-                                self._err('could not send data after restarting the channel')
+                                self._err(
+                                    'could not send data '
+                                    'after restarting the channel')
                                 self.channel_close()
                                 if self.record_mode:
                                     self.recorder.close()

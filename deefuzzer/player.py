@@ -36,8 +36,9 @@
 
 # Author: Guillaume Pellerin <yomguy@parisson.com>
 
-from relay import *
+from relay import Relay
 import time
+import urllib
 
 
 class Player:
