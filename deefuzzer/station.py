@@ -819,8 +819,8 @@ class Station(Thread):
             self._info('channel connected')
             self.channelIsOpen = True
             return True
-        except:
-            self._err('channel could not be opened')
+        except Exception as err:
+            self._err('channel could not be opened: {}'.format(err))
 
         return False
 
@@ -829,8 +829,8 @@ class Station(Thread):
         try:
             self.channel.close()
             self._info('channel closed')
-        except:
-            self._err('channel could not be closed')
+        except Exception as err:
+            self._err('channel could not be closed: {}'.format(err))
 
     def ping_server(self):
         log = True
@@ -840,12 +840,13 @@ class Station(Thread):
                 urllib.urlopen(self.server_url)
                 self.server_ping = True
                 self._info('Channel available.')
-            except:
+            except Exception as err:
                 time.sleep(1)
                 if log:
                     self._err(
                         'Could not connect the channel. '
-                        'Waiting for channel to become available.')
+                        'Waiting for channel to become available. '
+                        'Error: {}'.format(err))
                     log = False
 
     def icecastloop_nextmedia(self):
