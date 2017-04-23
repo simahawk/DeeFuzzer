@@ -43,16 +43,16 @@ import time
 import mimetypes
 import hashlib
 from threading import Thread
-from deefuzzer.station import (
+from .station import (
     Station,
 )
-from deefuzzer.tools.utils import (
+from .tools.utils import (
     get_conf_dict,
     contains_music,
     replace_all,
     merge_defaults,
 )
-from deefuzzer.tools.logger import QueueLogger
+from .tools.logger import QueueLogger
 
 mimetypes.add_type('application/x-yaml', '.yaml')
 
@@ -65,6 +65,7 @@ class DeeFuzzer(Thread):
     rss = None
     stations_available = {}
     stations_enabled = {}
+    stations_stopped = {}
     watch_folder = {}
     log_queue = Queue.Queue()
     main_loop = False
@@ -75,6 +76,7 @@ class DeeFuzzer(Thread):
         Thread.__init__(self)
         self.stations_available = {}
         self.stations_enabled = {}
+        self.stations_stopped = {}
         self.conf_file = conf_file
         self.conf = get_conf_dict(self.conf_file)
 
@@ -128,7 +130,6 @@ class DeeFuzzer(Thread):
                 setattr(self, k, v)
 
     def _log(self, level, msg):
-        print level, msg
         msg = '[core] {}'.format(msg)
         try:
             obj = {'msg': msg, 'level': level}
@@ -297,14 +298,17 @@ class DeeFuzzer(Thread):
             for i, (name, station) in enumerate(
                     self.stations_available.iteritems()):
                 station.setdefault('retries', 0)
+                if station.get('_stopped'):
+                    continue
                 try:
                     status = self._station_check_status(station, name)
                     if status is True:
                         # already existing
                         continue
-
+                    if status is False and station.get('_stopped'):
+                        # already stopped
+                        continue
                     self._station_prepare(station, name)
-
                     new_station = Station(station, q, self.log_queue, self.m3u)
                     if new_station.valid:
                         station['station_instance'] = new_station
@@ -337,6 +341,12 @@ class DeeFuzzer(Thread):
         try:
             if 'station_instance' in station:
                 # Check for station running here
+
+                if not station['station_instance'].is_running():
+                    # Station is stopped. Wait for it and drop it.
+                    station['_stopped'] = True
+                    return False
+
                 if station['station_instance'].isAlive():
                     # Station exists and is alive.  Don't recreate.
                     station['retries'] = 0

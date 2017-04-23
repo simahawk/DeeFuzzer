@@ -41,7 +41,7 @@ import time
 import urllib
 
 
-class Player:
+class Player(object):
     """A file streaming iterator"""
 
     def __init__(self, stream_type='icecast'):
@@ -70,34 +70,32 @@ class Player:
 
     def file_read_fast(self):
         """Read media and stream data through a generator."""
-        m = open(self.media, 'r')
-        while True:
-            __main_chunk = m.read(self.sub_buffer_size)
-            if not __main_chunk:
-                break
-            yield __main_chunk
-        m.close()
+        with open(self.media, 'r') as media:
+            while True:
+                __main_chunk = media.read(self.sub_buffer_size)
+                if not __main_chunk:
+                    break
+                yield __main_chunk
 
     def file_read_slow(self):
         """Read a bigger part of the media and stream the little parts
          of the data through a generator"""
-        m = open(self.media, 'r')
-        while True:
-            self.main_chunk = m.read(self.main_buffer_size)
-            if not self.main_chunk:
-                break
-            i = 0
+        with open(self.media, 'r') as media:
             while True:
-                start = i * self.sub_buffer_size
-                end = self.sub_buffer_size + (i * self.sub_buffer_size)
-                self.sub_chunk = self.main_chunk[start:end]
-                if not self.sub_chunk:
+                self.main_chunk = media.read(self.main_buffer_size)
+                if not self.main_chunk:
                     break
-                yield self.sub_chunk
-                i += 1
-        self.main_chunk = 0
-        self.sub_chunk = 0
-        m.close()
+                i = 0
+                while True:
+                    start = i * self.sub_buffer_size
+                    end = self.sub_buffer_size + (i * self.sub_buffer_size)
+                    self.sub_chunk = self.main_chunk[start:end]
+                    if not self.sub_chunk:
+                        break
+                    yield self.sub_chunk
+                    i += 1
+            self.main_chunk = 0
+            self.sub_chunk = 0
 
     def relay_read(self):
         """Read a distant media through its URL"""
@@ -110,7 +108,7 @@ class Player:
         self.sub_chunk = 0
 
 
-class FileReader:
+class FileReader(object):
 
     def __init__(self, fp):
         self.fp = open(fp, 'r')
@@ -119,7 +117,7 @@ class FileReader:
         return self.fp.read(size)
 
 
-class URLReader:
+class URLReader(object):
 
     def __init__(self, relay):
         self.__relayparam = relay

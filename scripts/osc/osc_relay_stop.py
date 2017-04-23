@@ -4,9 +4,9 @@
 import liblo
 import sys
 
-# send all messages to port 1234 on the local machine
+# send all messages to port sys.argv[1] on the local machine
 try:
-    target = liblo.Address(1234)
+    target = liblo.Address(sys.argv[1])
 except liblo.AddressError, err:
     print str(err)
     sys.exit()

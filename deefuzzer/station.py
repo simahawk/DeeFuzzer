@@ -37,6 +37,7 @@
 # Author: Guillaume Pellerin <yomguy@parisson.com>
 
 import os
+import sys
 import time
 import datetime
 import random
@@ -45,7 +46,7 @@ import urllib
 import mimetypes
 import json
 import hashlib
-from threading import Thread
+import threading
 
 from .player import URLReader, Player, FileReader
 from .recorder import Recorder
@@ -70,7 +71,30 @@ def to_utf8(adict):
     return adict
 
 
-class Station(Thread):
+class PlayThread(threading.Thread):
+
+    _is_running = True
+
+    def __init__(self):
+        super(PlayThread, self).__init__()
+        self._is_running = True
+
+    def turn_on(self):
+        self._is_running = True
+
+    def turn_off(self):
+        self._is_running = False
+
+    def is_running(self):
+        return self._is_running
+
+    def join(self, timeout=None):
+        """ Stop the thread and wait for it to end. """
+        self.turn_off()
+        threading.Thread.join(self, timeout)
+
+
+class Station(PlayThread):
     """a DeeFuzzer shouting station thread"""
 
     valid = False
@@ -94,7 +118,6 @@ class Station(Thread):
     jingles_mode = 0
     relay_mode = 0
     record_mode = 0
-    run_mode = 1
     appendtype = 0
     feeds_json = 0
     feeds_rss = 1
@@ -103,25 +126,20 @@ class Station(Thread):
     feeds_showfilepath = 0
     feeds_showfilename = 0
     short_name = ''
-    channelIsOpen = False
+    channel_is_open = False
     jingles_frequency = 2
     statusfile = ''
     base_directory = ''
 
     def __init__(self, station, q, logqueue, m3u):
-        Thread.__init__(self)
+        PlayThread.__init__(self)
         self.station = to_utf8(station)
-
-        print '#################'
-        print self.station
-        print '#################'
-        self._log_prefix = self.station['info']['short_name']
-
         self.q = q
         self.logqueue = logqueue
         self.m3u = m3u
         self.current_media_obj = MediaBase()
 
+        self._init_play_track()
         self._setup_status_file()
 
         if 'base_dir' in self.station:
@@ -182,6 +200,11 @@ class Station(Thread):
         self._setup_twitter()
         self._setup_recording()
         self.valid = True
+
+    def _init_play_track(self):
+        self.track_id = 0
+        self.track_counter = 0
+        self.playlist_start_id = 0
 
     def _setup_status_file(self):
         if 'station_statusfile' in self.station:
@@ -295,7 +318,9 @@ class Station(Thread):
                 self.osc_controller.add_method(
                     '/player', 'i', self.player_callback)
                 self.osc_controller.add_method(
-                    '/run', 'i', self.run_callback)
+                    '/start', 'i', self.start_callback)
+                self.osc_controller.add_method(
+                    '/stop', 'i', self.stop_callback)
                 self.osc_controller.start()
 
     def _setup_jingles(self):
@@ -356,7 +381,7 @@ class Station(Thread):
         return os.path.join(os.path.dirname(self.media_source), a)
 
     def _log(self, level, msg):
-        msg = u'[station: {}] {}'.format(self._log_prefix, msg)
+        msg = u'[station: {}] {}'.format(self.short_name, msg)
         # FIXME
         print level, msg
         try:
@@ -373,17 +398,30 @@ class Station(Thread):
     def _err(self, msg):
         self._log('err', msg)
 
-    def run_callback(self, path, value):
-        value = value[0]
-        self.run_mode = value
-        msg = "OSC: received message '%s' with arguments '%d'" % (path, value)
+    def _osc_log(self, path, value):
+        msg = (
+            "OSC: received message '{}' with arguments '{}'"
+        ).format(path, value)
         self._info(msg)
+
+    def start_callback(self, path, value):
+        self._osc_log(path, value[0])
+        self.turn_on()
+        if not self.channel_is_open:
+            self.channel_open()
+        self._info('Stream started.')
+
+    def stop_callback(self, path, value):
+        self._osc_log(path, value[0])
+        self.turn_off()
+        # restart from track 1
+        self._init_play_track()
+        self._info('Stream stopped.')
 
     def media_next_callback(self, path, value):
         value = value[0]
         self.next_media = value
-        msg = "OSC: received message '%s' with arguments '%d'" % (path, value)
-        self._info(msg)
+        self._osc_log(path, value)
 
     def relay_callback(self, path, value):
         value = value[0]
@@ -398,8 +436,7 @@ class Station(Thread):
 
         self.track_id = 0
         self.next_media = 1
-        msg = "OSC: received message '%s' with arguments '%d'" % (path, value)
-        self._info(msg)
+        self._osc_log(path, value)
         msg = "relaying : %s" % self.relay_url
         self._info(msg)
 
@@ -407,15 +444,13 @@ class Station(Thread):
         value = value[0]
         self.twitter = Twitter(self.twitter_key, self.twitter_secret)
         self.twitter_mode = value
-        msg = "OSC: received message '%s' with arguments '%d'" % (path, value)
-
         # IMPROVEMENT: The URL paths should be configurable because they're
         # server-implementation specific
         self.m3u_url = \
             self.channel.url + '/m3u/' + self.m3u.split(os.sep)[-1]
         self.feeds_url = self.channel.url + '/rss/' + \
             self.feeds_playlist_file.split(os.sep)[-1]
-        self._info(msg)
+        self._osc_log(path, value)
 
     def jingles_callback(self, path, value):
         value = value[0]
@@ -424,8 +459,7 @@ class Station(Thread):
             self.jingles_length = len(self.jingles_list)
             self.jingle_id = 0
         self.jingles_mode = value
-        msg = "OSC: received message '%s' with arguments '%d'" % (path, value)
-        self._info(msg)
+        self._osc_log(path, value)
 
     def record_callback(self, path, value):
         value = value[0]
@@ -462,14 +496,12 @@ class Station(Thread):
                     media.write_tags()
 
         self.record_mode = value
-        msg = "OSC: received message '%s' with arguments '%d'" % (path, value)
-        self._info(msg)
+        self._osc_log(path, value)
 
     def player_callback(self, path, value):
         value = value[0]
         self.player_mode = value
-        msg = "OSC: received message '%s' with arguments '%d'" % (path, value)
-        self._info(msg)
+        self._osc_log(path, value)
 
     def get_playlist(self):
         file_list = []
@@ -481,7 +513,6 @@ class Station(Thread):
             # TODO: silent fail?
             pass
 
-        print '\n'.join(file_list)
         return file_list
 
     def get_array_hash(self, s):
@@ -608,7 +639,7 @@ class Station(Thread):
         else:
             mess = 'No media in source!'
             self._err(mess)
-            self.run_mode = 0
+            self.turn_off()
 
     def media_to_objs(self, media_list):
         media_objs = []
@@ -832,14 +863,14 @@ class Station(Thread):
         self.update_twitter(msg)
 
     def channel_open(self):
-        if self.channelIsOpen:
+        if self.channel_is_open:
             return True
 
         try:
             self.channel.open()
             self.channel_delay = self.channel.delay()
             self._info('channel connected')
-            self.channelIsOpen = True
+            self.channel_is_open = True
             return True
         except Exception as err:
             self._err('channel could not be opened: {}'.format(err))
@@ -847,7 +878,7 @@ class Station(Thread):
         return False
 
     def channel_close(self):
-        self.channelIsOpen = False
+        self.channel_is_open = False
         try:
             self.channel.close()
             self._info('channel closed')
@@ -938,7 +969,7 @@ class Station(Thread):
     def _run_icecast(self):
         while True:
             # Do this so that the handlers will still restart the stream
-            while self.run_mode:
+            while self.is_running():
                 if not self.channel_open():
                     return
 
@@ -959,7 +990,7 @@ class Station(Thread):
                     # else:
                         # break
 
-                    if self.next_media or not self.run_mode:
+                    if self.next_media or not self.is_running():
                         break
 
                     if self.record_mode:
@@ -998,12 +1029,9 @@ class Station(Thread):
                             return
 
                             # send chunk loop end
-            # while run_mode loop end
-
-            self._info("Play mode ended. Stopping stream.")
 
             if self.record_mode:
                 self.recorder.close()
-
-            self.channel_close()
+            if self.channel_is_open:
+                self.channel_close()
             time.sleep(1)
