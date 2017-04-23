@@ -48,7 +48,7 @@ from deefuzzer.station import (
 )
 from deefuzzer.tools.utils import (
     get_conf_dict,
-    folder_contains_music,
+    contains_music,
     replace_all,
     merge_defaults,
 )
@@ -73,6 +73,8 @@ class DeeFuzzer(Thread):
 
     def __init__(self, conf_file):
         Thread.__init__(self)
+        self.stations_available = {}
+        self.stations_enabled = {}
         self.conf_file = conf_file
         self.conf = get_conf_dict(self.conf_file)
 
@@ -127,8 +129,9 @@ class DeeFuzzer(Thread):
 
     def _log(self, level, msg):
         print level, msg
+        msg = '[core] {}'.format(msg)
         try:
-            obj = {'msg': 'Core: ' + str(msg), 'level': level}
+            obj = {'msg': msg, 'level': level}
             self.log_queue.put(obj)
         except:
             pass
@@ -180,29 +183,19 @@ class DeeFuzzer(Thread):
             # The specified path is not a folder.  Bail.
             return
 
-        files = os.listdir(folder)
-        for file in files:
-            filepath = os.path.join(folder, file)
-            if os.path.isdir(filepath):
-                if folder_contains_music(filepath):
-                    self._station_create(filepath, options)
+        # TODO: use os.walk?
+        for item in os.listdir(folder):
+            path = os.path.join(folder, item)
+            if os.path.isdir(path):
+                if contains_music(path):
+                    self._station_create(path, options)
+                elif 'playlist.m3u' in os.listdir(path):
+                    self._station_create(path, options, playlist=True)
 
     def _station_exists(self, name):
         return name in self.stations_available
-        # try:
-        #     for s in self.stations_available:
-        #         if 'info' not in s:
-        #             continue
-        #         if 'short_name' not in s['info']:
-        #             continue
-        #         if s['info']['short_name'] == name:
-        #             return True
-        #     return False
-        # except:
-        #     pass
-        # return True
 
-    def _station_create(self, folder, options):
+    def _station_create(self, folder, options, playlist=True):
         """Create a station definition for a folder given the options."""
 
         path, name = os.path.split(folder)
@@ -212,12 +205,12 @@ class DeeFuzzer(Thread):
 
         station = {
             'station_name': name,
-            'path': folder,
+            'folder': folder,
         }
         self._station_apply_defaults(station)
 
         def skip_key(key):
-            return 'folder' in key or key in ('path', 'control')
+            return 'folder' in key or key == 'control'
 
         for key in station.iterkeys():
             if not skip_key(key):
@@ -226,7 +219,11 @@ class DeeFuzzer(Thread):
         if 'media' not in station:
             station['media'] = {}
 
-        station['media']['source'] = folder
+        source = folder
+        if playlist:
+            # use default playlist name
+            source = os.path.join(folder, 'playlist.m3u')
+        station['media']['source'] = source
         self.add_station(station, name)
 
     def _station_apply_defaults(self, station):
@@ -273,7 +270,8 @@ class DeeFuzzer(Thread):
         if isinstance(stationdef, dict):
             if 'station' in stationdef:
                 if isinstance(stationdef['station'], dict):
-                    self.add_station(stationdef['station'], name)
+                    self.add_station(stationdef['station'],
+                                     stationdef['station_name'])
                 elif isinstance(stationdef['station'], list):
                     for s in stationdef['station']:
                         self.add_station(s)
@@ -316,9 +314,9 @@ class DeeFuzzer(Thread):
                     else:
                         self._err('Error validating station ' + name)
                 except Exception as err:
-                    print 'ERR', err
-                    raise
-                    self._err('Error initializing station ' + name)
+                    self._err(
+                        'Error initializing station {}: {}'.format(name, err)
+                    )
                     if not self.ignore_errors:
                         raise
                     continue
@@ -377,8 +375,8 @@ class DeeFuzzer(Thread):
     def _station_prepare(self, station, name=''):
         if not name:
             name = self._station_autoname(station)
-        namehash = hashlib.md5(name).hexdigest()
-        station['station_statusfile'] = os.sep.join([self.log_dir, namehash])
+        station['station_statusfile'] = \
+            os.path.join(station['base_path'], hashlib.md5(name).hexdigest())
 
 
 class Producer(Thread):

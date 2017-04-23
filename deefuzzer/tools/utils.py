@@ -127,7 +127,7 @@ def get_conf_dict(afile):
     return False
 
 
-def folder_contains_music(folder):
+def contains_music(folder):
     files = os.listdir(folder)
     for filename in files:
         filepath = os.path.join(folder, filename)
